@@ -5,12 +5,7 @@ import numpy as np
 
 class Colorizer(ColorizationNet):
     def __init__(self, modelDir):
-        self.output_classes = 365
-
-        self.low_levelNet = self.buildLowNet()
-        self.mid_levelNet = self.buildMidNet()
-        self.globalFeatNet, self.classifyNet = self.buildGlobalNet()
-        self.colorizationNet = self.buildColorizeNet()
+        super().__init__()
 
         self.low_levelNet.load_weights(os.path.join(modelDir, 'lowNetWeights.h5'))
         self.mid_levelNet.load_weights(os.path.join(modelDir, 'midNetWeights.h5'))
@@ -34,9 +29,6 @@ class Colorizer(ColorizationNet):
         img_gray = cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)
 
         img_gray = resizeImg(img_gray)
-
-        height, width, channel = img_gray.shape
-        self.model = self.buildNet(height, width)
 
         img_bgr = self.colorize(img_gray)
         return img_bgr

@@ -1,7 +1,7 @@
-from tensorflow.keras.models import Model, Sequential
+import tensorflow as tf
+from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Flatten, Conv2D, UpSampling2D, \
-    Input, BatchNormalization, Concatenate, Lambda, Activation, Reshape
-from tensorflow.keras import backend as K
+    Input, BatchNormalization, Activation, Layer
 from tensorflow.keras.callbacks import Callback
 import numpy as np
 import random
@@ -29,6 +29,20 @@ class ImageProcessor:
         """ 去归一化 a(b)空间"""
         return x * 128. + 127.
 
+class MergeLayer(Layer):
+    def __init__(self):
+        super().__init__()
+
+    def call(self, localFeat, globalFeat):
+        shape = tf.shape(localFeat)[:]
+        batch_size, w, h = shape[0], shape[1], shape[2]
+        globalFeat = tf.reshape(globalFeat, (batch_size, 1, 1, 256))  # (None, 256) -> (None, 1, 1, 256)
+        globalFeatTile = tf.tile(globalFeat, [1, w, h, 1])  # 重复全局特征
+
+        jointFeat = tf.concat([localFeat, globalFeatTile], axis=-1)  # 融合
+
+        return jointFeat
+
 class ColorizationNet:
     def __init__(self):
         self.output_classes = 365
@@ -37,36 +51,25 @@ class ColorizationNet:
         self.mid_levelNet = self.buildMidNet()
         self.globalFeatNet, self.classifyNet = self.buildGlobalNet()
         self.colorizationNet = self.buildColorizeNet()
+        self.model = self.buildNet()
 
-        self.model = self.buildNet(224, 224)
-        self.model.compile(optimizer='adam',  # adadelta -> adam
-                           loss=['mse', 'categorical_crossentropy'],
-                           loss_weights=[1, 1. / 300])
-
-    def buildNet(self, input_row, input_col):
+    def buildNet(self):
         """ 构建整体网络
             input: img_org -> low-level net -> mid-level net -> output: local features
             input: img_scale -> low-level net -> global features net -> output: global features & class label
 
             fusion: local features & global features -> colorization net -> output: ab spaces
         """
-        img_org = Input(shape=(input_row, input_col, 1))
+        img_org = Input(shape=(None, None, 1))
         localFeat = self.mid_levelNet(self.low_levelNet(img_org))  # 局部特征
 
         img_scale = Input(shape=(224, 224, 1))
-
         low_levelFeat = self.low_levelNet(img_scale)
         globalFeat = self.globalFeatNet(low_levelFeat)  # 全局特征
         category = self.classifyNet(low_levelFeat)  # 分类结果
 
         # 融合层
-        shape = K.int_shape(localFeat)
-
-        globalFeat = Reshape((1, 1, 256))(globalFeat)  # (None, 256) -> (None, 1, 1, 256)
-        tileLayer = Lambda(lambda x:K.tile(x, [1, shape[1], shape[2], 1]))  # 重复全局特征
-        globalFeatTile = tileLayer(globalFeat)
-
-        jointFeat = Concatenate()([localFeat, globalFeatTile])  # 融合
+        jointFeat = MergeLayer()(localFeat, globalFeat)
 
         output_img = self.colorizationNet(jointFeat)  # 色度上色结果
 
@@ -281,6 +284,10 @@ class ColorizationModel(ColorizationNet):
             yield ([img_L, img_L], [img_ab, output_labels])
 
     def train(self, epochs, batch_size):
+        self.model.compile(optimizer='adam',  # adadelta -> adam
+                           loss=['mse', 'categorical_crossentropy'],
+                           loss_weights=[1, 1. / 300])
+
         """训练模型"""
         filePath = '/mnt/train.txt'
         root = '/mnt/'
